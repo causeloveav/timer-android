@@ -7,14 +7,15 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.clock import Clock
+from kivy.core.window import Window
 from datetime import datetime
 import os
 
 # Импорты для уведомлений и звука
 try:
-    from plyer import notification, audio
+    from plyer import notification
     from android.permissions import request_permissions, Permission
-    from jnius import autoclass, PythonJavaClass, java_method
+    from jnius import autoclass
     android_available = True
 except ImportError:
     android_available = False
@@ -28,14 +29,19 @@ class TimerApp(App):
         self.timer_running = False
         self.start_time = None
         self.log_file = "activity_log.txt"
-        self.is_in_background = False
+        self.keyboard_height = 0
         
         # Запрашиваем разрешения при запуске
         if android_available:
             self.request_android_permissions()
+            self.setup_background_service()
+        
+        # Основной ScrollView для решения проблемы с клавиатурой
+        main_scroll = ScrollView()
         
         # Основной layout для вертикальной ориентации
-        main_layout = BoxLayout(orientation='vertical', padding=20, spacing=15)
+        main_layout = BoxLayout(orientation='vertical', padding=20, spacing=15, size_hint_y=None)
+        main_layout.bind(minimum_height=main_layout.setter('height'))
         
         # Заголовок
         title = Label(
@@ -47,14 +53,14 @@ class TimerApp(App):
         )
         main_layout.add_widget(title)
         
-        # Секция ввода времени
+        # Секция ввода времени - СДЕЛАНО КОРОЧЕ
         time_section = BoxLayout(orientation='horizontal', size_hint_y=None, height='50dp')
-        time_section.add_widget(Label(text='Время (мин):', font_size='16sp', size_hint_x=0.4))
+        time_section.add_widget(Label(text='Время (мин):', font_size='16sp', size_hint_x=0.6))
         self.time_input = TextInput(
             text='25', 
             multiline=False, 
             font_size='16sp',
-            size_hint_x=0.6,
+            size_hint_x=0.4,  # Сделано меньше (было 0.6)
             input_filter='int'
         )
         time_section.add_widget(self.time_input)
@@ -71,32 +77,22 @@ class TimerApp(App):
         )
         main_layout.add_widget(self.time_display)
         
-        # Кнопки управления таймером
+        # Кнопки управления таймером - БЕЗ ИКОНОК
         timer_buttons = GridLayout(cols=3, size_hint_y=None, height='60dp', spacing=10)
         
-        self.start_button = Button(text='▶ СТАРТ', font_size='14sp')
+        self.start_button = Button(text='СТАРТ', font_size='14sp')  # Убрана иконка ▶
         self.start_button.bind(on_press=self.start_timer)
         timer_buttons.add_widget(self.start_button)
         
-        self.stop_button = Button(text='⏸ СТОП', font_size='14sp', disabled=True)
+        self.stop_button = Button(text='СТОП', font_size='14sp', disabled=True)  # Убрана иконка ⏸
         self.stop_button.bind(on_press=self.stop_timer)
         timer_buttons.add_widget(self.stop_button)
         
-        reset_button = Button(text='🔄 СБРОС', font_size='14sp')
+        reset_button = Button(text='СБРОС', font_size='14sp')  # Убрана иконка 🔄
         reset_button.bind(on_press=self.reset_timer)
         timer_buttons.add_widget(reset_button)
         
         main_layout.add_widget(timer_buttons)
-        
-        # Кнопка сворачивания в фон
-        minimize_button = Button(
-            text='📱 СВЕРНУТЬ В ФОН', 
-            font_size='14sp',
-            size_hint_y=None, 
-            height='50dp'
-        )
-        minimize_button.bind(on_press=self.minimize_to_background)
-        main_layout.add_widget(minimize_button)
         
         # Разделитель
         main_layout.add_widget(Label(text='', size_hint_y=None, height='20dp'))
@@ -112,6 +108,7 @@ class TimerApp(App):
         )
         main_layout.add_widget(activity_label)
         
+        # Поле ввода активности с обработкой клавиатуры
         self.activity_input = TextInput(
             multiline=True, 
             font_size='14sp',
@@ -119,11 +116,13 @@ class TimerApp(App):
             height='80dp',
             hint_text='Опишите свою активность...'
         )
+        # Привязываем события фокуса для обработки клавиатуры
+        self.activity_input.bind(focus=self.on_activity_focus)
         main_layout.add_widget(self.activity_input)
         
-        # Кнопка сохранения активности
+        # Кнопка сохранения активности - БЕЗ ИКОНКИ
         self.save_button = Button(
-            text='💾 СОХРАНИТЬ АКТИВНОСТЬ', 
+            text='СОХРАНИТЬ АКТИВНОСТЬ',  # Убрана иконка 💾
             font_size='16sp',
             size_hint_y=None, 
             height='50dp', 
@@ -135,14 +134,14 @@ class TimerApp(App):
         # Разделитель
         main_layout.add_widget(Label(text='', size_hint_y=None, height='15dp'))
         
-        # Кнопки управления логом
+        # Кнопки управления логом - БЕЗ ИКОНОК
         log_buttons = GridLayout(cols=2, size_hint_y=None, height='50dp', spacing=10)
         
-        view_log_button = Button(text='📋 ПОСМОТРЕТЬ ЛОГ', font_size='14sp')
+        view_log_button = Button(text='ПОСМОТРЕТЬ ЛОГ', font_size='14sp')  # Убрана иконка 📋
         view_log_button.bind(on_press=self.view_log)
         log_buttons.add_widget(view_log_button)
         
-        clear_log_button = Button(text='🗑️ ОЧИСТИТЬ ЛОГ', font_size='14sp')
+        clear_log_button = Button(text='ОЧИСТИТЬ ЛОГ', font_size='14sp')  # Убрана иконка 🗑️
         clear_log_button.bind(on_press=self.clear_log)
         log_buttons.add_widget(clear_log_button)
         
@@ -158,7 +157,40 @@ class TimerApp(App):
         )
         main_layout.add_widget(self.status_label)
         
-        return main_layout
+        # Добавляем дополнительное пространство внизу для клавиатуры
+        spacer = Label(text='', size_hint_y=None, height='100dp')
+        main_layout.add_widget(spacer)
+        
+        main_scroll.add_widget(main_layout)
+        
+        # Привязываем события клавиатуры
+        Window.bind(on_keyboard=self.on_keyboard)
+        if hasattr(Window, 'softinput_mode'):
+            Window.softinput_mode = 'below_target'
+        
+        return main_scroll
+    
+    def on_activity_focus(self, instance, value):
+        """Обрабатывает фокус на поле активности для прокрутки"""
+        if value:  # Поле получило фокус
+            # Прокручиваем вниз, чтобы поле было видно над клавиатурой
+            Clock.schedule_once(lambda dt: self.scroll_to_input(), 0.3)
+    
+    def scroll_to_input(self):
+        """Прокручивает к полю ввода активности"""
+        try:
+            # Получаем главный ScrollView
+            main_scroll = self.root
+            if hasattr(main_scroll, 'scroll_to'):
+                # Прокручиваем вниз к полю ввода
+                main_scroll.scroll_y = 0  # Прокрутка к низу
+        except:
+            pass
+    
+    def on_keyboard(self, window, key, *args):
+        """Обрабатывает события клавиатуры"""
+        # Можно добавить дополнительную логику при необходимости
+        return False
     
     def request_android_permissions(self):
         """Запрашивает необходимые разрешения Android"""
@@ -170,6 +202,38 @@ class TimerApp(App):
                 Permission.WAKE_LOCK,
                 Permission.FOREGROUND_SERVICE
             ])
+    
+    def setup_background_service(self):
+        """Настраивает службу для работы в фоне"""
+        if android_available:
+            try:
+                # Настраиваем приложение для работы в фоне
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                activity = PythonActivity.mActivity
+                
+                # Предотвращаем убийство приложения системой
+                Intent = autoclass('android.content.Intent')
+                PendingIntent = autoclass('android.app.PendingIntent')
+                
+            except Exception as e:
+                print(f"Ошибка настройки фоновой службы: {e}")
+    
+    def on_pause(self):
+        """Вызывается при переходе приложения в фон"""
+        # ВАЖНО: Возвращаем True для продолжения работы в фоне
+        if self.timer_running:
+            self.show_notification(
+                "Таймер работает в фоне",
+                f"Таймер продолжает работать. Осталось: {self.time_left // 60:02d}:{self.time_left % 60:02d}"
+            )
+        return True  # True означает продолжение работы в фоне
+    
+    def on_resume(self):
+        """Вызывается при возврате из фона"""
+        if self.timer_running:
+            self.status_label.text = "Таймер запущен"
+            self.status_label.color = [1, 0.5, 0, 1]
+        return True
     
     def start_timer(self, instance):
         try:
@@ -187,7 +251,7 @@ class TimerApp(App):
             self.start_button.disabled = True
             self.stop_button.disabled = False
             self.time_input.readonly = True
-            self.status_label.text = "⏰ Таймер запущен"
+            self.status_label.text = "Таймер запущен"
             self.status_label.color = [1, 0.5, 0, 1]
             
             # Показываем уведомление о начале таймера
@@ -218,8 +282,8 @@ class TimerApp(App):
             else:
                 self.time_display.color = [0.2, 0.6, 1, 1]
             
-            # Обновляем уведомление каждую минуту
-            if self.time_left % 60 == 0 and self.is_in_background:
+            # Обновляем уведомление каждые 5 минут
+            if self.time_left % 300 == 0:
                 self.update_background_notification()
             
             if self.time_left <= 0:
@@ -231,12 +295,12 @@ class TimerApp(App):
         self.timer_running = False
         self.time_display.text = "00:00"
         self.time_display.color = [1, 0, 0, 1]
-        self.status_label.text = "⏰ ВРЕМЯ ВЫШЛО! Укажите активность"
+        self.status_label.text = "ВРЕМЯ ВЫШЛО! Укажите активность"
         self.status_label.color = [1, 0, 0, 1]
         
         # Показываем уведомление об окончании
         self.show_notification(
-            "⏰ ВРЕМЯ ВЫШЛО!",
+            "ВРЕМЯ ВЫШЛО!",
             "Таймер завершен! Откройте приложение для ввода активности.",
             urgent=True
         )
@@ -272,13 +336,12 @@ class TimerApp(App):
         """Воспроизводит звуковой сигнал"""
         if android_available:
             try:
-                # Попытка воспроизвести системный звук уведомления
+                # Системный звук уведомления
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 context = PythonActivity.mActivity
                 
                 # Получаем RingtoneManager для системных звуков
                 RingtoneManager = autoclass('android.media.RingtoneManager')
-                Uri = autoclass('android.net.Uri')
                 
                 # Воспроизводим звук уведомления
                 notification_uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
@@ -292,14 +355,6 @@ class TimerApp(App):
                     
             except Exception as e:
                 print(f"Ошибка воспроизведения звука: {e}")
-                # Fallback - простой звуковой сигнал через plyer
-                try:
-                    # Создаем простой звук
-                    for _ in range(3):
-                        # Здесь можно добавить воспроизведение звукового файла
-                        pass
-                except:
-                    pass
     
     def vibrate_device(self):
         """Включает вибрацию устройства"""
@@ -315,25 +370,6 @@ class TimerApp(App):
             except Exception as e:
                 print(f"Ошибка вибрации: {e}")
     
-    def minimize_to_background(self, instance):
-        """Сворачивает приложение в фон"""
-        self.is_in_background = True
-        
-        if self.timer_running:
-            # Показываем постоянное уведомление о работающем таймере
-            self.update_background_notification()
-            self.status_label.text = "📱 Приложение работает в фоне"
-            self.status_label.color = [0, 0, 1, 1]
-        
-        # Сворачиваем приложение (переводим в фон)
-        if android_available:
-            try:
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                activity = PythonActivity.mActivity
-                activity.moveTaskToBack(True)
-            except Exception as e:
-                print(f"Ошибка сворачивания: {e}")
-    
     def update_background_notification(self):
         """Обновляет уведомление о работающем таймере"""
         if self.timer_running:
@@ -341,23 +377,16 @@ class TimerApp(App):
             seconds = self.time_left % 60
             
             self.show_notification(
-                "⏰ Таймер активен",
+                "Таймер активен",
                 f"Осталось времени: {minutes:02d}:{seconds:02d}"
             )
-    
-    def on_resume(self):
-        """Вызывается при возврате из фона"""
-        self.is_in_background = False
-        if self.timer_running:
-            self.status_label.text = "⏰ Таймер запущен"
-            self.status_label.color = [1, 0.5, 0, 1]
     
     def stop_timer(self, instance):
         self.timer_running = False
         self.start_button.disabled = False
         self.stop_button.disabled = True
         self.time_input.readonly = False
-        self.status_label.text = "⏸ Таймер остановлен"
+        self.status_label.text = "Таймер остановлен"
         self.status_label.color = [1, 0, 0, 1]
         Clock.unschedule(self.update_timer)
         
@@ -382,7 +411,7 @@ class TimerApp(App):
         self.time_input.readonly = False
         self.save_button.disabled = True
         self.activity_input.text = ""
-        self.status_label.text = "✅ Готов к работе"
+        self.status_label.text = "Готов к работе"
         self.status_label.color = [0, 0.7, 0, 1]
         Clock.unschedule(self.update_timer)
     
@@ -403,14 +432,14 @@ class TimerApp(App):
             
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(
-                    f"📅 {self.start_time:%Y-%m-%d %H:%M:%S} → "
+                    f"Дата: {self.start_time:%Y-%m-%d %H:%M:%S} -> "
                     f"{end_time:%Y-%m-%d %H:%M:%S}\n"
-                    f"⏱️ Длительность: {duration_minutes} мин\n"
-                    f"📝 Активность: {activity}\n"
+                    f"Длительность: {duration_minutes} мин\n"
+                    f"Активность: {activity}\n"
                     f"{'-' * 40}\n\n"
                 )
             
-            self.status_label.text = "💾 Активность сохранена!"
+            self.status_label.text = "Активность сохранена!"
             self.status_label.color = [0, 0.7, 0, 1]
             self.save_button.disabled = True
             self.activity_input.text = ""
@@ -441,7 +470,7 @@ class TimerApp(App):
         content = BoxLayout(orientation='vertical', spacing=10)
         
         title_label = Label(
-            text='📋 ЖУРНАЛ АКТИВНОСТИ',
+            text='ЖУРНАЛ АКТИВНОСТИ',
             font_size='18sp',
             size_hint_y=None,
             height='40dp',
@@ -461,7 +490,7 @@ class TimerApp(App):
         content.add_widget(scroll)
         
         close_button = Button(
-            text='❌ ЗАКРЫТЬ',
+            text='ЗАКРЫТЬ',
             font_size='16sp',
             size_hint_y=None,
             height='50dp'
@@ -488,7 +517,7 @@ class TimerApp(App):
         content = BoxLayout(orientation='vertical', spacing=20, padding=20)
         
         message = Label(
-            text='⚠️ ВНИМАНИЕ!\n\nВы уверены, что хотите очистить журнал?\nЭто действие нельзя отменить.',
+            text='ВНИМАНИЕ!\n\nВы уверены, что хотите очистить журнал?\nЭто действие нельзя отменить.',
             font_size='16sp',
             text_size=(None, None),
             halign='center'
@@ -497,8 +526,8 @@ class TimerApp(App):
         
         buttons = BoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height='50dp')
         
-        yes_button = Button(text='✅ ДА, ОЧИСТИТЬ', font_size='14sp')
-        no_button = Button(text='❌ ОТМЕНА', font_size='14sp')
+        yes_button = Button(text='ДА, ОЧИСТИТЬ', font_size='14sp')
+        no_button = Button(text='ОТМЕНА', font_size='14sp')
         
         buttons.add_widget(yes_button)
         buttons.add_widget(no_button)
@@ -515,7 +544,7 @@ class TimerApp(App):
             try:
                 with open(self.log_file, "w", encoding="utf-8") as f:
                     f.write("=== ЖУРНАЛ АКТИВНОСТИ ===\n\n")
-                self.status_label.text = "🗑️ Журнал очищен"
+                self.status_label.text = "Журнал очищен"
                 self.status_label.color = [0, 0.7, 0, 1]
             except Exception as e:
                 self.status_label.text = f"Ошибка очистки: {e}"
